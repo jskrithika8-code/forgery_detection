@@ -1,13 +1,10 @@
 import os
 import io
-import uuid
-import tempfile
 import logging
 from typing import List
 
 import cv2
 import numpy as np
-import pytesseract
 import streamlit as st
 from PIL import Image
 
@@ -42,14 +39,6 @@ if easyocr:
         logging.error(f"EasyOCR initialization error: {e}")
         easyocr_reader = None
 
-# --- Tesseract language map (covers all 22 official languages) ---
-TESSERACT_LANG_MAP = {
-    "en": "eng", "as": "asm", "bn": "ben", "gu": "guj", "hi": "hin",
-    "kn": "kan", "ml": "mal", "mr": "mar", "ne": "nep", "or": "ori",
-    "pa": "pan", "ta": "tam", "te": "tel", "ur": "urd",
-    "sa": "san", "mai": "mai", "sat": "sat", "sd": "snd"
-}
-
 # --- Helper functions ---
 def preprocess(img: np.ndarray) -> np.ndarray:
     if img is None:
@@ -61,21 +50,84 @@ def preprocess(img: np.ndarray) -> np.ndarray:
 def detect_forgery_rules(extracted_text: str, processed_images: List[str]) -> dict:
     confidence = 0.0
     reasons = []
+    suspicious_sections = []
     if "Times New Roman" in extracted_text and "Arial" in extracted_text:
         reasons.append("Font mismatch detected")
         confidence += 0.3
+        suspicious_sections.append({
+            "type": "font_anomaly",
+            "description": "Font mismatch detected"
+        })
     if "Invoice Number" not in extracted_text:
         reasons.append("Missing expected field: Invoice Number")
         confidence += 0.2
     return {
         "overall_forgery_confidence": min(confidence, 1.0),
         "is_flagged_for_review": confidence > 0.5,
-        "flagging_reasons": reasons
+        "flagging_reasons": reasons,
+        "suspicious_sections": suspicious_sections
+    }
+
+def detect_signature_forgery(processed_img: np.ndarray):
+    h, w = processed_img.shape[:2]
+    suspicious_sections = []
+    reasons = []
+    confidence = 0.0
+
+    roi = processed_img[int(h*0.6):h, :]
+    edges = cv2.Canny(roi, 50, 150)
+    contours, _ = cv2.findContours(edges, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+    stroke_count = len(contours)
+
+    if stroke_count < 10:
+        reasons.append("Signature appears too simple (possible fake)")
+        confidence += 0.3
+        suspicious_sections.append({
+            "type": "signature_anomaly",
+            "bbox": [0, int(h*0.6), w, h],
+            "description": "Low stroke complexity"
+        })
+
+    areas = [cv2.contourArea(c) for c in contours]
+    if areas and np.std(areas) < 5:
+        reasons.append("Signature strokes too uniform (possible printed)")
+        confidence += 0.3
+
+    blur_score = cv2.Laplacian(roi, cv2.CV_64F).var()
+    if blur_score < 30:
+        reasons.append("Signature region is blurred (possible copy-paste)")
+        confidence += 0.2
+
+    return {
+        "confidence": min(confidence, 1.0),
+        "reasons": reasons,
+        "sections": suspicious_sections
+    }
+
+def generate_forgery_report(extracted_text: str, processed_img: np.ndarray, processed_images: List[str]) -> dict:
+    text_report = detect_forgery_rules(extracted_text, processed_images)
+    signature_report = detect_signature_forgery(processed_img)
+
+    combined_confidence = min(
+        text_report["overall_forgery_confidence"] + signature_report["confidence"], 1.0
+    )
+    combined_reasons = text_report["flagging_reasons"] + signature_report["reasons"]
+    combined_sections = text_report["suspicious_sections"] + signature_report["sections"]
+
+    return {
+        "overall_forgery_confidence": combined_confidence,
+        "is_flagged_for_review": combined_confidence > 0.5,
+        "flagging_reasons": combined_reasons,
+        "suspicious_sections": combined_sections,
+        "sub_reports": {
+            "text_report": text_report,
+            "signature_report": signature_report
+        }
     }
 
 # --- Streamlit UI ---
 st.set_page_config(page_title="OCR + Forgery Detection", layout="wide")
-st.title("OCR + Forgery Detection")
+st.title("OCR + Forgery Detection (EasyOCR only)")
 
 uploaded_file = st.file_uploader("Upload image", type=["png", "jpg", "jpeg"])
 
@@ -86,7 +138,6 @@ if uploaded_file:
 
     st.image(processed_img, caption="Preprocessed Image")
 
-    # OCR with EasyOCR first, fallback to Tesseract
     text = ""
     if easyocr_reader:
         try:
@@ -94,15 +145,20 @@ if uploaded_file:
             text = " ".join([t[1] for t in result])
         except Exception as e:
             logging.error(f"EasyOCR error: {e}")
-            # fallback to Tesseract
-            t_langs = "+".join([TESSERACT_LANG_MAP.get(l, "eng") for l in EASYOCR_LANGS])
-            text = pytesseract.image_to_string(processed_img, lang=t_langs)
+            text = "(OCR failed)"
     else:
-        t_langs = "+".join([TESSERACT_LANG_MAP.get(l, "eng") for l in EASYOCR_LANGS])
-        text = pytesseract.image_to_string(processed_img, lang=t_langs)
+        text = "(EasyOCR not available)"
 
     st.text_area("Extracted Text", value=text, height=300)
 
-    # Forgery detection
-    report = detect_forgery_rules(text, [])
-    st.json(report)
+    forgery_report = generate_forgery_report(text, processed_img, [])
+    st.subheader("Unified Forgery Report")
+    st.json(forgery_report)
+
+    st.download_button(
+        label="Download Forgery Report",
+        data=io.BytesIO(str(forgery_report).encode("utf-8")),
+        file_name=f"{uploaded_file.name}_forgery_report.json",
+        mime="application/json"
+    )
+
