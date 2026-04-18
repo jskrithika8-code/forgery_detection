@@ -10,6 +10,8 @@ from google.cloud import documentai_v1 as documentai
 from google.cloud import storage
 import uuid # For generating unique filenames in GCS
 import random # For generating random confidence scores for demonstration
+import streamlit as st
+st.title("Forgery Detection App")
 
 # Configure logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
