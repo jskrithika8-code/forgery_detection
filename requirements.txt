@@ -1,0 +1,9 @@
+streamlit
+flask
+opencv-python-headless
+numpy
+pdf2image
+pytesseract
+easyocr
+google-cloud-documentai
+google-cloud-storage
