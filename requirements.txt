@@ -5,5 +5,8 @@ numpy
 pdf2image
 pytesseract
 easyocr
+torch
+Pillow
 google-cloud-documentai
 google-cloud-storage
+protobuf
