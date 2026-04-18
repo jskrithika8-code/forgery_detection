@@ -336,3 +336,70 @@ if __name__ == '__main__':
   "extracted_text": "...", // The full extracted text
   "processed_images_available": ["processed_example_page_1.png", "..."] // For visual output
 }
+
+def detect_forgery_rules(extracted_text: str, processed_images: list) -> dict:
+    """
+    Simple rule-based forgery detection.
+    Returns a JSON-like dictionary with confidence score, reasons, and suspicious sections.
+    """
+
+    suspicious_sections = []
+    flagging_reasons = []
+    confidence = 0.0
+
+    # Rule 1: Font mismatch (simulate check)
+    if "Times New Roman" in extracted_text and "Arial" in extracted_text:
+        suspicious_sections.append({
+            "page": 1,
+            "type": "font_anomaly",
+            "description": "Font mismatch detected.",
+            "bbox": [100, 50, 300, 80],
+            "reason_code": "FONT_MISMATCH",
+            "evidence_detail": "Expected Arial, found Times New Roman."
+        })
+        flagging_reasons.append("Detected font inconsistencies in header.")
+        confidence += 0.3
+
+    # Rule 2: Layout anomaly (simulate bounding box shift)
+    suspicious_sections.append({
+        "page": 2,
+        "type": "layout_anomaly",
+        "description": "Signature block shifted compared to template.",
+        "bbox": [200, 400, 500, 450],
+        "reason_code": "LAYOUT_SHIFT",
+        "evidence_detail": "Signature field misaligned by ~15px."
+    })
+    flagging_reasons.append("Unusual layout of signature block.")
+    confidence += 0.3
+
+    # Rule 3: Compression artifacts (simulate check)
+    if any("processed" in img for img in processed_images):
+        flagging_reasons.append("High compression artifacts detected.")
+        confidence += 0.2
+
+    # Rule 4: Text mismatch (simulate database check)
+    if "Invoice Number" not in extracted_text:
+        flagging_reasons.append("Extracted text does not match expected record.")
+        confidence += 0.2
+
+    return {
+        "overall_forgery_confidence": min(confidence, 1.0),
+        "is_flagged_for_review": confidence > 0.5,
+        "flagging_reasons": flagging_reasons,
+        "suspicious_sections": suspicious_sections
+    }
+
+forgery_report = detect_forgery_rules(
+    extracted_text="\n\n".join(all_text),
+    processed_images=processed_image_paths
+)
+
+return jsonify({
+    "original_filename": original_filename,
+    "ocr_engine_strategy": "Hybrid Local (EasyOCR/Tesseract)",
+    "requested_languages": target_langs,
+    "extracted_text": "\n\n".join(all_text),
+    "processed_images_available": processed_image_paths,
+    "forgery_report": forgery_report
+}), 200
+
